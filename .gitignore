@@ -1,0 +1,10 @@
+**/llvm/**/*.*
+app/assembly/build
+GTAGS
+GPATH
+GRTAGS
+node_modules
+
+.DS_Store
+.AppleDouble
+.LSOverride
