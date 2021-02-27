@@ -49,20 +49,9 @@ static int gen_random_id()
 	return r;
 }
 
-static request_t *create_request(const char *app_name, const uint8 *file_buf,
-				 uint32 size)
-{
-	request_t request[1] = { 0 };
-	char url[URL_MAX_LEN] = { 0 };
+int aee_host_msg_callback(void *msg, uint16_t msg_len);
 
-	snprintf(url, sizeof(url) - 1, "/applet?name=%s", app_name);
-
-	request_t *req =
-		init_request(request, url, COAP_PUT, FMT_APP_RAW_BINARY,
-			     (uint8 *)file_buf, size);
-	request->mid = gen_random_id();
-	return req;
-}
+unsigned char leading[2] = { 0x12, 0x34 };
 
 void install_app()
 {
@@ -72,13 +61,37 @@ void install_app()
 	}
 	printk("[WASM][INFO] engine is now ready.\n");
 
-	const uint8 *wasm_file_buf = (uint8 *)wasm_build_app_aot;
-	uint32 wasm_file_size = wasm_build_app_aot_len;
+	const uint8 *wasm_file_buf = (uint8 *)app_build_optimized_wasm;
+	uint32 wasm_file_size = app_build_optimized_wasm_len;
 
-	request_t *request =
-		create_request("milan_wasm", wasm_file_buf, wasm_file_size);
+    request_t request[1] = { 0 };
+    char url[URL_MAX_LEN] = { 0 };
 
-	am_dispatch_request(request);
+    snprintf(url, sizeof(url) - 1, "/applet?name=%s", "milan_wasm");
+
+    init_request(request, url, COAP_PUT, FMT_APP_RAW_BINARY,
+                 (uint8 *)wasm_file_buf, wasm_file_size);
+	request->mid = gen_random_id();
+
+    int req_buf_size;
+    char *req_buf = pack_request(request, &req_buf_size);
+    if (!req_buf) {
+        printk("[WASM][INFO] pack request failed!\n");
+        return;
+    }
+
+    aee_host_msg_callback(leading, sizeof(leading));
+
+    uint16_t msg_type = INSTALL_WASM_APP;
+    msg_type = htons(msg_type);
+    aee_host_msg_callback((char*)&msg_type, sizeof(msg_type));
+
+    int req_size_n = htonl(req_buf_size);
+    aee_host_msg_callback((char*)&req_size_n, sizeof(req_size_n));
+
+    aee_host_msg_callback(req_buf, req_buf_size);
+
+    free_req_resp_packet(req_buf);
 
 	printk("[WASM][INFO] Dispatched install milan_wasm app request.\n");
 }
@@ -112,14 +125,19 @@ host_interface interface = { .init = host_init,
 
 /******* Init WASM enviornment and app manager ********/
 
+static char global_heap_buf[256 * 1024] = { 0 };
+
 void init_wasm_engine()
 {
 	RuntimeInitArgs init_args;
 	memset(&init_args, 0, sizeof(RuntimeInitArgs));
 
 	// set mem alloc method
-	init_args.mem_alloc_type = Alloc_With_System_Allocator;
-	init_args.n_native_symbols = 0;
+	//init_args.mem_alloc_type = Alloc_With_System_Allocator;
+	//init_args.n_native_symbols = 0;
+    init_args.mem_alloc_type = Alloc_With_Pool;
+    init_args.mem_alloc_option.pool.heap_buf = global_heap_buf;
+    init_args.mem_alloc_option.pool.heap_size = sizeof(global_heap_buf);
 
 	if (!wasm_runtime_full_init(&init_args)) {
 		printk("[WASM][ERR ] Init runtime environment failed.\n");
